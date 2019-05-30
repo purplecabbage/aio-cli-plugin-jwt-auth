@@ -16,6 +16,7 @@ const { validateToken, createJwtAuthConfig, validateConfigData } = require('../.
 const { cli } = require('cli-ux')
 const auth = require('@adobe/jwt-auth')
 const debug = require('debug')('aio-cli-plugin-jwt-auth')
+let crypto = require('crypto')
 
 async function getToken (jwtConfig) {
   const body = await auth(jwtConfig)
@@ -23,6 +24,14 @@ async function getToken (jwtConfig) {
   let expires = (new Date(Date.now() + body.expires_in)).toString()
   config.set('jwt-auth.access_token', body.access_token)
   config.set('jwt-auth.access_token_expiry', expires)
+
+  // whenever we get a token, we store a checksum of the private key we used
+  // to create it, so we can detect tokens invalidated by changing the private key.
+  let genCheckSum = crypto.createHash('md5')
+    .update(jwtConfig.privateKey.key)
+    .digest('hex')
+  config.set('jwt-auth.pk_checksum', genCheckSum)
+
   return { expires, token: body.access_token }
 }
 
@@ -40,16 +49,29 @@ async function getAccessToken (passphrase = '', force, prompt) {
 
   let token = configData.access_token
   let expires = configData.access_token_expiry
+  let jwtConfig = createJwtAuthConfig(configData, passphrase)
 
   if (!force && token) {
-    if (validateToken(token)) {
-      return Promise.resolve({ expires, token })
+    // first verify that checksum matches the privateKey
+    // if not we need to request a new token
+    let lastchecksum = config.get('jwt-auth.pk_checksum')
+    let newchecksum = crypto.createHash('md5')
+      .update(jwtConfig.privateKey.key)
+      .digest('hex')
+
+    if (newchecksum === lastchecksum) {
+      debug('checksum for private key matches')
+      if (validateToken(token)) {
+        return Promise.resolve({ expires, token })
+      }
+    } else {
+      debug('checksum for private key mis-match')
     }
   }
 
-  let jwtConfig
+  debug('getting a new token')
+
   try {
-    jwtConfig = createJwtAuthConfig(configData, passphrase)
     return await getToken(jwtConfig)
   } catch (obj) {
     // three types of errors:
