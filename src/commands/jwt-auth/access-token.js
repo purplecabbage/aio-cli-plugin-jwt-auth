@@ -28,7 +28,7 @@ async function getToken (jwtConfig) {
   // whenever we get a token, we store a checksum of the private key we used
   // to create it, so we can detect tokens invalidated by changing the private key.
   let genCheckSum = crypto.createHash('md5')
-    .update(jwtConfig.privateKey.key)
+    .update(jwtConfig.privateKey)
     .digest('hex')
   config.set('jwt-auth.pk_checksum', genCheckSum)
 
@@ -54,18 +54,20 @@ async function getAccessToken (passphrase = '', force, prompt) {
   if (!force && token) {
     // first verify that checksum matches the privateKey
     // if not we need to request a new token
-    let lastchecksum = config.get('jwt-auth.pk_checksum')
+    let lastchecksum = configData.pk_checksum
     let newchecksum = crypto.createHash('md5')
-      .update(jwtConfig.privateKey.key)
+      .update(jwtConfig.privateKey)
       .digest('hex')
 
-    if (newchecksum === lastchecksum) {
-      debug('checksum for private key matches')
-      if (validateToken(token)) {
+    if (validateToken(token)) {
+      if (newchecksum === lastchecksum) {
+        debug('checksum for private key matches')
         return Promise.resolve({ expires, token })
+      } else {
+        debug('checksum for private key mis-match')
       }
     } else {
-      debug('checksum for private key mis-match')
+      debug('token is expired')
     }
   }
 
@@ -103,7 +105,7 @@ class AccessTokenCommand extends Command {
       data = await getAccessToken(flags.passphrase, flags.force, !flags['no-prompt'] || flags.passphrase)
     } catch (error) {
       debug(error)
-      this.error(error.message)
+      this.error(error)
     }
     if (flags.bare) {
       this.log(data.token)
